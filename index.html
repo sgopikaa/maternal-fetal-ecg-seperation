@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fetal Cardiac Monitor — Maternal–Fetal ECG Separation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="wordmark">
+      <span class="wordmark-pulse" aria-hidden="true">
+        <svg viewBox="0 0 60 20" class="pulse-icon"><polyline points="0,10 12,10 16,2 20,18 24,10 60,10" /></svg>
+      </span>
+      <div>
+        <h1>Fetal Cardiac Monitor</h1>
+        <p class="subtitle">Maternal–fetal ECG separation &amp; monitoring console</p>
+      </div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div id="status-pill" class="status-pill status-pending">
+      <span class="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-label">
+    <span class="hero-eyebrow">Channel 1 — abdominal lead</span>
+    <span class="hero-value" id="hero-hr-readout">— bpm</span>
+  </div>
+  <div class="strip-wrap">
+    <canvas id="hero-canvas" class="strip-canvas"></canvas>
+  </div>
+  <p class="hero-caption">Composite abdominal signal: maternal ECG + fetal ECG + noise. Run an analysis to separate the fetal trace and evaluate cardiac status.</p>
+</section>
+
+<main class="layout">
+
+  <aside class="panel control-panel">
+    <h2 class="panel-title">Recording parameters</h2>
+
+    <div class="field">
+      <label for="maternal-hr">Maternal heart rate</label>
+      <div class="field-row">
+        <input type="range" id="maternal-hr" min="55" max="110" value="78" />
+        <output class="field-readout" id="maternal-hr-out">78 bpm</output>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="fetal-hr">Fetal heart rate (baseline)</label>
+      <div class="field-row">
+        <input type="range" id="fetal-hr" min="100" max="180" value="145" />
+        <output class="field-readout" id="fetal-hr-out">145 bpm</output>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="snr">Input SNR (recording quality)</label>
+      <div class="field-row">
+        <input type="range" id="snr" min="2" max="15" value="8" />
+        <output class="field-readout" id="snr-out">8 dB</output>
+      </div>
+    </div>
+
+    <div class="field field-toggle">
+      <label for="distress-toggle">Simulate distress pattern</label>
+      <button id="distress-toggle" class="toggle" role="switch" aria-checked="false">
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    <p class="field-hint">Introduces a late-deceleration-like fetal HR drop with reduced variability, for testing the monitoring stage.</p>
+
+    <div class="button-stack">
+      <button id="train-btn" class="btn btn-secondary">Retrain models</button>
+      <button id="run-btn" class="btn btn-primary" disabled>Run analysis</button>
+    </div>
+
+    <div class="model-legend">
+      <h3>Pipeline models</h3>
+      <ul>
+        <li><span class="dot dot-ica"></span> FastICA <em>(ML · separation)</em></li>
+        <li><span class="dot dot-cnn"></span> CNN Autoencoder <em>(DL · separation)</em></li>
+        <li><span class="dot dot-rf"></span> Random Forest <em>(ML · classification)</em></li>
+        <li><span class="dot dot-lstm"></span> CNN–LSTM <em>(DL · temporal risk)</em></li>
+      </ul>
+    </div>
+  </aside>
+
+  <section class="results">
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="separation" role="tab" aria-selected="true">Signal separation</button>
+      <button class="tab" data-tab="monitoring" role="tab" aria-selected="false">Fetal monitoring</button>
+    </div>
+
+    <div id="empty-state" class="empty-state">
+      <svg viewBox="0 0 120 40" class="empty-trace"><polyline points="0,20 20,20 26,6 32,34 38,20 120,20" /></svg>
+      <p>Waiting for the first run. Set your parameters on the left and press <strong>Run analysis</strong> once the models finish training.</p>
+    </div>
+
+    <div id="tab-separation" class="tab-panel" hidden>
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Ground truth vs. mixed input</h2>
+          <span class="panel-note">Ground truth is only available because this recording is synthetic</span>
+        </div>
+        <div class="chart-row">
+          <div class="chart-box">
+            <h4>True fetal ECG (reference)</h4>
+            <canvas class="strip-canvas small" id="canvas-truth-fetal"></canvas>
+          </div>
+          <div class="chart-box">
+            <h4>True maternal ECG (reference)</h4>
+            <canvas class="strip-canvas small" id="canvas-truth-maternal"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Extracted fetal ECG — model comparison</h2>
+          <span id="best-model-badge" class="badge">—</span>
+        </div>
+        <div class="chart-row">
+          <div class="chart-box">
+            <div class="chart-box-header">
+              <h4><span class="dot dot-ica"></span> FastICA estimate</h4>
+              <span class="metric-readout" id="ica-snr">SNR — dB</span>
+            </div>
+            <canvas class="strip-canvas small" id="canvas-ica"></canvas>
+          </div>
+          <div class="chart-box">
+            <div class="chart-box-header">
+              <h4><span class="dot dot-cnn"></span> CNN Autoencoder estimate</h4>
+              <span class="metric-readout" id="cnn-snr">SNR — dB</span>
+            </div>
+            <canvas class="strip-canvas small" id="canvas-cnn"></canvas>
+          </div>
+        </div>
+        <p class="panel-footnote">SNR is measured against the known synthetic fetal reference (sign/scale-aligned). Higher is better.</p>
+      </div>
+    </div>
+
+    <div id="tab-monitoring" class="tab-panel" hidden>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Fetal heart-rate trend</h2>
+          <span class="panel-note"><span id="peaks-detected">0</span> fetal beats detected</span>
+        </div>
+        <div class="fhr-chart-wrap">
+          <canvas id="fhr-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="readout-grid">
+        <div class="readout-card">
+          <span class="readout-label">Mean FHR</span>
+          <span class="readout-value" id="feat-mean">—</span>
+        </div>
+        <div class="readout-card">
+          <span class="readout-label">Variability (SD)</span>
+          <span class="readout-value" id="feat-std">—</span>
+        </div>
+        <div class="readout-card">
+          <span class="readout-label">RMSSD</span>
+          <span class="readout-value" id="feat-rmssd">—</span>
+        </div>
+        <div class="readout-card">
+          <span class="readout-label">Range</span>
+          <span class="readout-value" id="feat-range">—</span>
+        </div>
+      </div>
+
+      <div class="verdict-row">
+        <div class="panel verdict-card">
+          <div class="panel-header">
+            <h2 class="panel-title"><span class="dot dot-rf"></span> Random Forest — CTG category</h2>
+          </div>
+          <p class="verdict-label" id="rf-label">—</p>
+          <div id="rf-bars" class="proba-bars"></div>
+        </div>
+
+        <div class="panel verdict-card">
+          <div class="panel-header">
+            <h2 class="panel-title"><span class="dot dot-lstm"></span> CNN–LSTM — temporal risk</h2>
+          </div>
+          <p class="verdict-label" id="lstm-label">—</p>
+          <div class="gauge-wrap">
+            <div class="gauge-track"><div class="gauge-fill" id="lstm-gauge"></div></div>
+            <span class="gauge-readout" id="lstm-prob">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="alert-banner" class="alert-banner" hidden>
+        ⚠ Combined signals suggest this trace should be reviewed by a clinician.
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<footer class="footer">
+  <p>Educational demo — trained on synthetic maternal/fetal ECG mixtures generated at runtime, not on clinical data. Swap in a real dataset (e.g. PhysioNet ADFECGDB) via <code>signal_generator.py</code> before drawing any clinical conclusions.</p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
